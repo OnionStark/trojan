@@ -152,6 +152,22 @@ func commonRouter(router *gin.Engine) {
 		common.POST("/loginInfo", func(c *gin.Context) {
 			c.JSON(200, controller.SetLoginInfo(c.PostForm("title")))
 		})
+		common.GET("/registerConfig", func(c *gin.Context) {
+			if RequestUsername(c) != "admin" {
+				c.JSON(200, &controller.ResponseBody{Msg: "无权限"})
+				return
+			}
+			c.JSON(200, controller.GetRegisterConfig())
+		})
+		common.POST("/registerConfig", func(c *gin.Context) {
+			if RequestUsername(c) != "admin" {
+				c.JSON(200, &controller.ResponseBody{Msg: "无权限"})
+				return
+			}
+			enabled := c.PostForm("enabled") == "true"
+			code := c.PostForm("code")
+			c.JSON(200, controller.SetRegisterConfig(enabled, code))
+		})
 	}
 }
 
@@ -168,6 +184,15 @@ func staticRouter(router *gin.Engine) {
 func noTokenRouter(router *gin.Engine) {
 	router.GET("/trojan/user/subscribe", func(c *gin.Context) {
 		controller.ClashSubInfo(c)
+	})
+	router.GET("/auth/registerStatus", func(c *gin.Context) {
+		c.JSON(200, controller.GetRegisterStatus())
+	})
+	router.POST("/auth/signup", func(c *gin.Context) {
+		username := c.PostForm("username")
+		password := c.PostForm("password")
+		code := c.PostForm("code")
+		c.JSON(200, controller.SignUp(username, password, code))
 	})
 }
 

@@ -1,2 +1,10 @@
 .vscode
 .idea
+
+# 构建/调试产物, 不纳入源码仓库
+/result
+/trojan-bin
+/run-web.sh
+/tmpseed
+# 前端构建产物(由 trojan-web 的 vite build 生成后拷入, 编译时嵌入)
+/web/templates

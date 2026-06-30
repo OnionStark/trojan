@@ -178,8 +178,10 @@ func Auth(r *gin.Engine, timeout int) *jwt.GinJWTMiddleware {
 		authO.POST("/reset_pass", updateUser)
 		authO.POST("/logout", authMiddleware.LogoutHandler)
 		authO.POST("/refresh_token", authMiddleware.RefreshHandler)
-		// 系统初始化后，注册功能只能在授权后使用
-		authO.POST("/register", updateUser)
+		// 系统初始化后，注册功能只能在授权后使用; 未初始化时已在上面注册了公开路由, 此处不再重复注册以免路由冲突
+		if adminPass != "" {
+			authO.POST("/register", updateUser)
+		}
 	}
 	return authMiddleware
 }
