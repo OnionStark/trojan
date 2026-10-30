@@ -34,17 +34,19 @@ func UserList(requestUser string) *ResponseBody {
 			userList = []*core.User{}
 		}
 	}
+	fillNodeIDs(userList)
 	domain, port := trojan.GetDomainAndPort()
 	responseBody.Data = map[string]interface{}{
 		"domain":   domain,
 		"port":     port,
 		"userList": userList,
+		"nodes":    toPublic(LoadNodes(), requestUser == "admin"),
 	}
 	return &responseBody
 }
 
 // PageUserList 分页查询获取用户列表
-func PageUserList(curPage int, pageSize int) *ResponseBody {
+func PageUserList(curPage int, pageSize int, requestUser string) *ResponseBody {
 	responseBody := ResponseBody{Msg: "success"}
 	defer TimeCost(time.Now(), &responseBody)
 	mysql := core.GetMysql()
@@ -53,11 +55,15 @@ func PageUserList(curPage int, pageSize int) *ResponseBody {
 		responseBody.Msg = err.Error()
 		return &responseBody
 	}
+	if pageData != nil {
+		fillNodeIDs(pageData.DataList)
+	}
 	domain, port := trojan.GetDomainAndPort()
 	responseBody.Data = map[string]interface{}{
 		"domain":   domain,
 		"port":     port,
 		"pageData": pageData,
+		"nodes":    toPublic(LoadNodes(), requestUser == "admin"),
 	}
 	return &responseBody
 }
@@ -186,7 +192,6 @@ func ClashSubInfo(c *gin.Context) {
 	if user != nil {
 		pass, _ := base64.StdEncoding.DecodeString(user.Password)
 		if password == string(pass) {
-			var wsData, wsHost string
 			userInfo := fmt.Sprintf("upload=%d, download=%d", user.Upload, user.Download)
 			if user.Quota != -1 {
 				userInfo = fmt.Sprintf("%s, total=%d", userInfo, user.Quota)
@@ -199,33 +204,18 @@ func ClashSubInfo(c *gin.Context) {
 			c.Header("content-disposition", fmt.Sprintf("attachment; filename=%s", user.Username))
 			c.Header("subscription-userinfo", userInfo)
 
-			domain, port := trojan.GetDomainAndPort()
-			name := fmt.Sprintf("%s:%d", domain, port)
-			configData := string(core.Load(""))
-			if gjson.Get(configData, "websocket").Exists() && gjson.Get(configData, "websocket.enabled").Bool() {
-				if gjson.Get(configData, "websocket.host").Exists() {
-					hostTemp := gjson.Get(configData, "websocket.host").String()
-					if hostTemp != "" {
-						wsHost = fmt.Sprintf(", headers: {Host: %s}", hostTemp)
-					}
-				}
-				wsOpt := fmt.Sprintf("{path: %s%s}", gjson.Get(configData, "websocket.path").String(), wsHost)
-				wsData = fmt.Sprintf(", network: ws, udp: true, ws-opts: %s", wsOpt)
+			config := BuildClashConfig(NodesForUser(username), password, localWebsocketSuffix())
+			if config == "" {
+				domain, port := trojan.GetDomainAndPort()
+				config = BuildClashConfig([]Node{{
+					Name:   fmt.Sprintf("%s:%d", domain, port),
+					Server: domain,
+					Port:   port,
+					Sni:    domain,
+					Local:  true,
+				}}, password, localWebsocketSuffix())
 			}
-			proxyData := fmt.Sprintf("  - {name: %s, server: %s, port: %d, type: trojan, password: %s, sni: %s%s}",
-				name, domain, port, password, domain, wsData)
-			result := fmt.Sprintf(`proxies:
-%s
-
-proxy-groups:
-  - name: PROXY
-    type: select
-    proxies:
-      - %s
-
-%s
-`, proxyData, name, clashRules())
-			c.String(200, result)
+			c.String(200, config+"\n"+clashRules())
 			return
 		}
 	}

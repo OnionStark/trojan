@@ -39,6 +39,8 @@ type User struct {
 	Upload      uint64
 	UseDays     uint
 	ExpiryDate  string
+	// NodeIDs 该用户被分配的节点。空表示尚未分配，分享时按本机节点处理。
+	NodeIDs []string `json:"NodeIDs,omitempty"`
 }
 
 // PageQuery 分页查询的结构体

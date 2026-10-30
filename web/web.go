@@ -28,11 +28,15 @@ func userRouter(router *gin.Engine) {
 			pageSizeStr := c.DefaultQuery("pageSize", "10")
 			curPage, _ := strconv.Atoi(curPageStr)
 			pageSize, _ := strconv.Atoi(pageSizeStr)
-			c.JSON(200, controller.PageUserList(curPage, pageSize))
+			c.JSON(200, controller.PageUserList(curPage, pageSize, RequestUsername(c)))
 		})
 		user.POST("", func(c *gin.Context) {
 			username := c.PostForm("username")
 			password := c.PostForm("password")
+			if _, ok := c.GetPostForm("nodes"); ok && RequestUsername(c) == "admin" {
+				c.JSON(200, controller.CreateUserAndSync(username, password, c.PostForm("nodes")))
+				return
+			}
 			c.JSON(200, controller.CreateUser(username, password))
 		})
 		user.POST("/update", func(c *gin.Context) {
@@ -40,6 +44,10 @@ func userRouter(router *gin.Engine) {
 			username := c.PostForm("username")
 			password := c.PostForm("password")
 			id, _ := strconv.Atoi(sid)
+			if _, ok := c.GetPostForm("nodes"); ok && RequestUsername(c) == "admin" {
+				c.JSON(200, controller.UpdateUserAndSync(uint(id), username, password, c.PostForm("nodes")))
+				return
+			}
 			c.JSON(200, controller.UpdateUser(uint(id), username, password))
 		})
 		user.POST("/expire", func(c *gin.Context) {
@@ -57,6 +65,10 @@ func userRouter(router *gin.Engine) {
 		user.DELETE("", func(c *gin.Context) {
 			stringId := c.Query("id")
 			id, _ := strconv.Atoi(stringId)
+			if RequestUsername(c) == "admin" {
+				c.JSON(200, controller.DelUserAndSync(uint(id)))
+				return
+			}
 			c.JSON(200, controller.DelUser(uint(id)))
 		})
 	}
@@ -98,6 +110,20 @@ func trojanRouter(router *gin.Engine) {
 	})
 	router.POST("/trojan/domain", func(c *gin.Context) {
 		c.JSON(200, controller.SetDomain(c.PostForm("domain")))
+	})
+	router.GET("/trojan/nodes", func(c *gin.Context) {
+		if RequestUsername(c) != "admin" {
+			c.JSON(200, &controller.ResponseBody{Msg: "无权限"})
+			return
+		}
+		c.JSON(200, controller.GetNodes())
+	})
+	router.POST("/trojan/nodes", func(c *gin.Context) {
+		if RequestUsername(c) != "admin" {
+			c.JSON(200, &controller.ResponseBody{Msg: "无权限"})
+			return
+		}
+		c.JSON(200, controller.SaveNodes(c))
 	})
 	router.GET("/trojan/log", func(c *gin.Context) {
 		controller.Log(c)
