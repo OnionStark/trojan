@@ -82,7 +82,7 @@ func trojanRouter(router *gin.Engine) {
 		c.JSON(200, controller.Stop())
 	})
 	router.POST("/trojan/restart", func(c *gin.Context) {
-		c.JSON(200, controller.Restart())
+		c.JSON(200, controller.RestartAsync())
 	})
 	router.GET("/trojan/loglevel", func(c *gin.Context) {
 		c.JSON(200, controller.GetLogLevel())

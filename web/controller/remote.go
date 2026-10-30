@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -23,7 +24,7 @@ type remoteClient struct {
 func newRemoteClient() *remoteClient {
 	return &remoteClient{
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 8 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
@@ -160,17 +161,21 @@ func (c *remoteClient) updateUser(node Node, token string, id uint, username, pa
 	return c.writeUser(node, token, http.MethodPost, "/trojan/user/update", form)
 }
 
-func (c *remoteClient) restart(node Node, token string) error {
-	req, err := http.NewRequest(http.MethodPost, node.PanelURL+"/trojan/restart", nil)
-	if err != nil {
-		return err
+// connectionClosed 表示响应还没读完，对端就把连接关掉了。
+// 重启请求会停掉对方的 trojan，而面板的 HTTPS 正由这个进程转发，所以成功重启时客户端经常只看到 EOF。
+func connectionClosed(err error) bool {
+	if err == nil {
+		return false
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	_, err = c.do(req)
-	return err
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "eof") || strings.Contains(msg, "connection reset") || strings.Contains(msg, "broken pipe")
 }
 
-// Ensure 在远程面板创建账号；已存在则改为相同的用户名和密码，并重启对方的 trojan。
+// Ensure 在远程面板创建账号；已存在则改为相同的用户名和密码。
+// trojan 开启 MySQL 后每次连接都会查库，不需要重启。重启会关掉承载面板的 443 连接。
 func (c *remoteClient) Ensure(node Node, oldName, newName, passB64 string) error {
 	token, err := c.login(node)
 	if err != nil {
@@ -181,13 +186,7 @@ func (c *remoteClient) Ensure(node Node, oldName, newName, passB64 string) error
 		return err
 	}
 	if user, ok := findRemoteUser(users, oldName, newName); ok {
-		if err := c.updateUser(node, token, user.ID, newName, passB64); err != nil {
-			return err
-		}
-		if err := c.restart(node, token); err != nil {
-			return fmt.Errorf("账号已更新，重启失败: %s", err.Error())
-		}
-		return nil
+		return c.updateUser(node, token, user.ID, newName, passB64)
 	}
 	if err := c.createUser(node, token, newName, passB64); err != nil {
 		if !strings.Contains(err.Error(), "已存在用户名") {
@@ -201,18 +200,13 @@ func (c *remoteClient) Ensure(node Node, oldName, newName, passB64 string) error
 		if !ok {
 			return err
 		}
-		if err := c.updateUser(node, token, user.ID, newName, passB64); err != nil {
-			return err
-		}
-		if err := c.restart(node, token); err != nil {
-			return fmt.Errorf("账号已更新，重启失败: %s", err.Error())
-		}
-		return nil
+		return c.updateUser(node, token, user.ID, newName, passB64)
 	}
 	return nil
 }
 
-// Remove 删除远程面板上的账号。对方接口会在删除后重启 trojan。账号本来就不存在时视为成功。
+// Remove 删除远程面板上的账号。账号本来就不存在时视为成功。
+// 旧版面板会在删除之后重启 trojan，从而把响应连接掐断，这种情况视为已删除。
 func (c *remoteClient) Remove(node Node, username string) error {
 	token, err := c.login(node)
 	if err != nil {
@@ -232,5 +226,8 @@ func (c *remoteClient) Remove(node Node, username string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	_, err = c.do(req)
+	if err == nil || connectionClosed(err) {
+		return nil
+	}
 	return err
 }

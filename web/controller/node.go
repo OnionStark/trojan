@@ -464,12 +464,9 @@ func applyAssignment(nodes []Node, oldName, newName, passB64 string, oldIDs, new
 		res := SyncResult{NodeID: node.ID, Name: node.Name, Action: action, OK: err == nil}
 		if err != nil {
 			res.Msg = err.Error()
-			if action == "create" {
-				delete(applied, id)
-			}
-		} else {
-			applied[id] = true
 		}
+		// 勾选是用户的选择，先记下来。远程暂时失败时页面上仍保持勾选，下次保存会再试。
+		applied[id] = true
 		results = append(results, res)
 	}
 	for _, id := range oldIDs {
@@ -710,10 +707,17 @@ func localWebsocketSuffix() string {
 
 // BuildClashConfig 生成包含多个节点、可手动切换的 clash 配置。
 func BuildClashConfig(nodes []Node, password, localWS string) string {
+	ordered := append([]Node(nil), nodes...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Local != ordered[j].Local {
+			return ordered[i].Local
+		}
+		return false
+	})
 	var proxies []string
 	var names []string
 	seen := map[string]int{}
-	for _, n := range nodes {
+	for _, n := range ordered {
 		if n.Server == "" || n.Port == 0 {
 			continue
 		}

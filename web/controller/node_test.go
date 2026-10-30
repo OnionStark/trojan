@@ -114,6 +114,20 @@ func TestBuildClashConfigSelectsAllNodes(t *testing.T) {
 	if !strings.Contains(got, "port: 8443") {
 		t.Fatalf("remote port missing: %s", got)
 	}
+	if strings.Index(got, `"香港"`) > strings.Index(got, `"日本"`) {
+		t.Fatalf("local node should be the default: %s", got)
+	}
+}
+
+func TestBuildClashConfigPutsLocalFirst(t *testing.T) {
+	nodes := []Node{
+		{Name: "us", Server: "us.example", Port: 443, Sni: "us.example"},
+		{ID: localNodeID, Name: "本机", Server: "local.example", Port: 443, Sni: "local.example", Local: true},
+	}
+	got := BuildClashConfig(nodes, "pass", "")
+	if strings.Index(got, `"本机"`) > strings.Index(got, `"us"`) {
+		t.Fatalf("local node should be listed first: %s", got)
+	}
 }
 
 func TestRemoteEnsureAndRemove(t *testing.T) {
@@ -181,8 +195,8 @@ func TestRemoteEnsureAndRemove(t *testing.T) {
 	if err := client.Ensure(node, "alice", "alice2", "cGFzcw=="); err != nil {
 		t.Fatal(err)
 	}
-	if restarted != 1 {
-		t.Fatalf("update should restart once, restarted=%d", restarted)
+	if restarted != 0 {
+		t.Fatalf("update should not restart trojan, restarted=%d", restarted)
 	}
 	if users[0]["Username"] != "alice2" {
 		t.Fatalf("username=%v", users[0]["Username"])
@@ -196,6 +210,82 @@ func TestRemoteEnsureAndRemove(t *testing.T) {
 	if err := client.Remove(node, "alice2"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRemoteEnsureUpdateSurvivesRestartEOF(t *testing.T) {
+	users := []map[string]interface{}{{"ID": uint(7), "Username": "alice"}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{"code": 200, "token": "tok"})
+	})
+	mux.HandleFunc("/trojan/user", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"Msg":  "success",
+			"Data": map[string]interface{}{"userList": users},
+		})
+	})
+	mux.HandleFunc("/trojan/user/update", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"Msg": "success"})
+	})
+	mux.HandleFunc("/trojan/restart", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("sync should not restart trojan")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	client := newRemoteClient()
+	node := Node{PanelURL: srv.URL, AdminPass: "hash", Name: "美国"}
+	if err := client.Ensure(node, "alice", "alice", "cGFzcw=="); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyAssignmentKeepsNodeWhenSyncFails(t *testing.T) {
+	nodes := []Node{
+		{ID: localNodeID, Name: "本机", Local: true},
+		{ID: "us", Name: "美国"},
+	}
+	results, applied := applyAssignment(nodes, "alice", "alice", "cGFzcw==", []string{localNodeID}, []string{localNodeID, "us"}, timeoutSyncer{})
+	if len(results) != 1 || results[0].OK {
+		t.Fatalf("results=%+v", results)
+	}
+	if strings.Join(applied, ",") != localNodeID+",us" {
+		t.Fatalf("applied=%v", applied)
+	}
+}
+
+type timeoutSyncer struct{}
+
+func (timeoutSyncer) Ensure(node Node, oldName, newName, passB64 string) error {
+	return errors.New("登录失败: timeout")
+}
+
+func (timeoutSyncer) Remove(node Node, username string) error {
+	return nil
+}
+
+func TestApplyAssignmentKeepsNodeWhenAccountUpdated(t *testing.T) {
+	nodes := []Node{
+		{ID: localNodeID, Name: "本机", Local: true},
+		{ID: "us", Name: "美国"},
+	}
+	syncer := failAfterUpdate{}
+	results, applied := applyAssignment(nodes, "alice", "alice", "cGFzcw==", []string{localNodeID}, []string{localNodeID, "us"}, syncer)
+	if len(results) != 1 || results[0].OK || !strings.Contains(results[0].Msg, "账号已更新") {
+		t.Fatalf("results=%+v", results)
+	}
+	if strings.Join(applied, ",") != localNodeID+",us" {
+		t.Fatalf("applied=%v", applied)
+	}
+}
+
+type failAfterUpdate struct{}
+
+func (failAfterUpdate) Ensure(node Node, oldName, newName, passB64 string) error {
+	return errors.New("账号已更新，重启失败: EOF")
+}
+
+func (failAfterUpdate) Remove(node Node, username string) error {
+	return nil
 }
 
 type fakeSyncer struct {

@@ -40,6 +40,16 @@ func Restart() *ResponseBody {
 	return &responseBody
 }
 
+// RestartAsync 先返回结果，再重启 trojan。
+// 面板流量从 trojan 的 443 回落到本服务，同步重启会把还没发出的响应一起掐断。
+func RestartAsync() *ResponseBody {
+	go func() {
+		time.Sleep(time.Second)
+		trojan.Restart()
+	}()
+	return &ResponseBody{Msg: "success"}
+}
+
 // Update trojan更新
 func Update() *ResponseBody {
 	responseBody := ResponseBody{Msg: "success"}
